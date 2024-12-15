@@ -106,10 +106,13 @@ validate_config() {
 
 # Загрузка переменных из source-файла
 load_variables() {
+    # Объявляем ассоциативный массив
+    declare -A variables
+
     if [ ! -f "$SOURCE_CONFIG" ]; then
         log "ERROR" "Файл source-конфига не найден: $SOURCE_CONFIG"
         exit 1
-    }
+    fi
 
     log "INFO" "Загрузка переменных из $SOURCE_CONFIG"
     while IFS='=' read -r key value; do
@@ -124,7 +127,8 @@ load_variables() {
     if [ ${#variables[@]} -eq 0 ]; then
         log "ERROR" "Не удалось загрузить переменные из source-файла"
         exit 1
-    }
+    fi
+
     log "INFO" "Загружено ${#variables[@]} переменных"
 }
 
@@ -136,12 +140,12 @@ replace_variables() {
     # Проверка существования файла
     if ! check_file_exists "$file"; then
         return 1
-    }
+    fi
 
     # Проверка прав доступа
     if ! check_permissions "$file"; then
         return 1
-    }
+    fi
 
     # Создаем бэкап с временной меткой
     if [ "$BACKUP" = true ]; then
@@ -162,85 +166,85 @@ replace_variables() {
         value="${variables[$key]}"
         search_pattern="\${$key}"
         if grep -q "$search_pattern" "$temp_file"; then
-                      sed -i "s|$search_pattern|$value|g" "$temp_file"
-                      ((replace_count++))
-                  fi
-              done
+            sed -i "s|$search_pattern|$value|g" "$temp_file"
+            ((replace_count++))
+        fi
+    done
 
-              # Проверяем результат
-              if [ $replace_count -eq 0 ]; then
-                  log "WARNING" "Не найдено переменных для замены в $file"
-              else
-                  log "INFO" "Выполнено $replace_count замен в $file"
-              fi
+    # Проверяем результат
+    if [ $replace_count -eq 0 ]; then
+        log "WARNING" "Не найдено переменных для замены в $file"
+    else
+        log "INFO" "Выполнено $replace_count замен в $file"
+    fi
 
-              # Проверяем изменения и валидируем
-              if ! cmp -s "$temp_file" "$file"; then
-                  if validate_config "$temp_file"; then
-                      cp "$temp_file" "$file"
-                      ((found_files++))
-                  fi
-              fi
+    # Проверяем изменения и валидируем
+    if ! cmp -s "$temp_file" "$file"; then
+        if validate_config "$temp_file"; then
+            cp "$temp_file" "$file"
+            ((found_files++))
+        fi
+    fi
 
-              rm "$temp_file"
-          }
+    rm "$temp_file"
+}
 
-          # Показ статистики
-          show_statistics() {
-              log "INFO" "=== Статистика выполнения ==="
-              log "INFO" "Обработано файлов: $found_files"
-              log "INFO" "Создано резервных копий: $(ls *.bak* 2>/dev/null | wc -l)"
-              log "INFO" "Время выполнения: $SECONDS секунд"
-          }
+# Показ статистики
+show_statistics() {
+    log "INFO" "=== Статистика выполнения ==="
+    log "INFO" "Обработано файлов: $found_files"
+    log "INFO" "Создано резервных копий: $(ls *.bak* 2>/dev/null | wc -l)"
+    log "INFO" "Время выполнения: $SECONDS секунд"
+}
 
-          # Вывод справки
-          print_usage() {
-              echo "Использование: $0 [-s source_config] [-q] [-b] [-h]"
-              echo "  -s FILE  использовать альтернативный source-файл"
-              echo "  -q       тихий режим"
-              echo "  -b       без создания резервных копий"
-              echo "  -h       показать эту справку"
-          }
+# Вывод справки
+print_usage() {
+    echo "Использование: $0 [-s source_config] [-q] [-b] [-h]"
+    echo "  -s FILE  использовать альтернативный source-файл"
+    echo "  -q       тихий режим"
+    echo "  -b       без создания резервных копий"
+    echo "  -h       показать эту справку"
+}
 
-          # Основная логика
-          main() {
-              # Проверка зависимостей
-              check_dependencies
+# Основная логика
+main() {
+    # Проверка зависимостей
+    check_dependencies
 
-              # Обработка параметров командной строки
-              while getopts "s:qbh" opt; do
-                  case $opt in
-                      s) SOURCE_CONFIG="$OPTARG" ;;
-                      q) VERBOSE=false ;;
-                      b) BACKUP=false ;;
-                      h) print_usage; exit 0 ;;
-                      \?) print_usage; exit 1 ;;
-                  esac
-              done
+    # Обработка параметров командной строки
+    while getopts "s:qbh" opt; do
+        case $opt in
+            s) SOURCE_CONFIG="$OPTARG" ;;
+            q) VERBOSE=false ;;
+            b) BACKUP=false ;;
+            h) print_usage; exit 0 ;;
+            \?) print_usage; exit 1 ;;
+        esac
+    done
 
-              # Инициализация лога
-              echo "=== Начало выполнения $(date) ===" > "$LOG_FILE"
+    # Инициализация лога
+    echo "=== Начало выполнения $(date) ===" > "$LOG_FILE"
 
-              # Загрузка переменных
-              load_variables
+    # Загрузка переменных
+    load_variables
 
-              # Проверка наличия файлов в массиве
-              if [ ${#SEARCH_DIRS[@]} -eq 0 ]; then
-                  log "ERROR" "Не указаны файлы для обработки в массиве SEARCH_DIRS"
-                  exit 1
-              }
+    # Проверка наличия файлов в массиве
+    if [ ${#SEARCH_DIRS[@]} -eq 0 ]; then
+        log "ERROR" "Не указаны файлы для обработки в массиве SEARCH_DIRS"
+        exit 1
+    fi
 
-              # Обработка файлов из массива
-              log "INFO" "Начало обработки файлов"
-              for file in "${SEARCH_DIRS[@]}"; do
-                  # Пропускаем закомментированные строки
-                  [[ $file =~ ^#.*$ ]] && continue
-                  replace_variables "$file"
-              done
+    # Обработка файлов из массива
+    log "INFO" "Начало обработки файлов"
+    for file in "${SEARCH_DIRS[@]}"; do
+        # Пропускаем закомментированные строки
+        [[ $file =~ ^#.*$ ]] && continue
+        replace_variables "$file"
+    done
 
-              # Вывод статистики
-              show_statistics
-          }
+    # Вывод статистики
+    show_statistics
+}
 
-          # Запуск скрипта
-          main "$@"
+# Запуск скрипта
+main "$@"
