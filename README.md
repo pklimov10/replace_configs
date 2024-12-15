@@ -2,10 +2,13 @@
 Скрипт предназначен для автоматической замены переменных в конфигурационных файлах. Он читает значения переменных из source файла и подставляет их в целевые конфигурационные файлы.
 
 ▎Запуск
-./replace_configs.sh                    # Стандартный запуск
-./replace_configs.sh -s other.conf      # Использовать другой source-файл
-./replace_configs.sh -q                 # Тихий режим
-./replace_configs.sh -b                 # Без создания бэкапов
+./replace_configs.sh                     # Стандартный запуск
+./replace_configs.sh -s other.conf       # Использовать другой source-файл
+./replace_configs.sh -q                  # Тихий режим
+./replace_configs.sh -b                  # Без создания бэкапов
+./replace_configs.sh -d                  # Режим dry-run
+./replace_configs.sh -h                  # Показать справку
+
 
 ▎Структура файлов
 1. source файл (например, variables.conf):

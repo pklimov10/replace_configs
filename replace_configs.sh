@@ -1,24 +1,19 @@
 #!/bin/bash
-#Дополнительные опции:
-#- -s file - использовать альтернативный source-файл
-#- -q - тихий режим (только логирование в файл)
-#- -b - отключить создание резервных копий
-#- -h - показать справку
-# Настройки
-set -e  # Прерывать выполнение при ошибках
-set -u  # Прерывать при использовании неопределенных переменных
+#./replace_configs.sh                     # Стандартный запуск
+#./replace_configs.sh -s other.conf       # Использовать другой source-файл
+#./replace_configs.sh -q                  # Тихий режим
+#./replace_configs.sh -b                  # Без создания бэкапов
+#./replace_configs.sh -d                  # Режим dry-run
+#./replace_configs.sh -h                  # Показать справку
 
-# Глобальные переменные
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_CONFIG="${SCRIPT_DIR}/source.conf"
-LOG_FILE="${SCRIPT_DIR}/replace_configs.log"
-VERBOSE=true
-BACKUP=true
-declare -A variables
-found_files=0
+# Константы
+readonly SCRIPT_NAME=$(basename "$0")
+readonly VERSION="1.0.1"
+readonly DEFAULT_SOURCE_CONFIG="source.conf"
+readonly LOG_FILE="replace_configs.log"
 
-# Массив путей к конфигам для обработки
-SEARCH_DIRS=(
+# Конфигурационные файлы для обработки
+readonly SEARCH_DIRS=(
     "./configs/standalone.xml"
     "./configs/cmj.properties"
     "./configs/server.properties"
@@ -26,225 +21,165 @@ SEARCH_DIRS=(
     "./configs/wildfly.conf"
 )
 
-# Функция обработки ошибок
-error_handler() {
-    local line_no=$1
-    local error_code=$2
-    log "ERROR" "Ошибка (код $error_code) в строке $line_no"
-    cleanup
-    exit $error_code
-}
-trap 'error_handler ${LINENO} $?' ERR
+# Глобальные переменные
+declare -A variables
+BACKUP=true
+VERBOSE=true
+DRY_RUN=false
+SOURCE_CONFIG="$DEFAULT_SOURCE_CONFIG"
+TEMP_FILE=""
 
-# Функция очистки
-cleanup() {
-    log "INFO" "Выполняется очистка временных файлов..."
-    rm -f /tmp/replace_configs_*
+# Функция вывода справки
+show_help() {
+    cat << EOF
+Использование: $SCRIPT_NAME [ОПЦИИ]
+Заменяет переменные в конфигурационных файлах.
+
+Опции:
+    -s FILE    Использовать альтернативный source-файл (по умолчанию: $DEFAULT_SOURCE_CONFIG)
+    -q         Тихий режим
+    -b         Без создания резервных копий
+    -d         Dry-run (показать, что будет сделано, без реальных изменений)
+    -h         Показать эту справку
+    -v         Показать версию
+
+Примеры:
+    $SCRIPT_NAME                     # Стандартный запуск
+    $SCRIPT_NAME -s other.conf       # Использовать другой source-файл
+    $SCRIPT_NAME -q                  # Тихий режим
+    $SCRIPT_NAME -b                  # Без создания бэкапов
+EOF
+    exit 0
 }
-trap cleanup EXIT
 
 # Функция логирования
 log() {
     local level=$1
     local message=$2
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "$timestamp [$level] - $message" >> "$LOG_FILE"
-    if [ "$VERBOSE" = true ]; then
-        case $level in
-            ERROR) echo -e "\e[31m$message\e[0m" ;;    # Красный для ошибок
-            WARNING) echo -e "\e[33m$message\e[0m" ;;  # Желтый для предупреждений
-            INFO) echo "$message" ;;
-        esac
-    fi
-}
 
-# Проверка зависимостей
-check_dependencies() {
-    local deps=(sed date mktemp grep cp)
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" >/dev/null 2>&1; then
-            echo "Ошибка: Требуется утилита $dep"
-            exit 1
-        fi
-    done
-}
-
-# Проверка существования файла
-check_file_exists() {
-    local file=$1
-    if [ ! -f "$file" ]; then
-        log "ERROR" "Файл не найден: $file"
-        return 1
+    echo "$timestamp [$level] $message" >> "$LOG_FILE"
+    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ]; then
+        echo "[$level] $message"
     fi
-    return 0
 }
 
 # Проверка прав доступа
 check_permissions() {
     local file=$1
     if [ ! -w "$file" ]; then
-        log "ERROR" "Нет прав на запись в файл: $file"
+        log "ERROR" "Нет разрешения на запись в файл: $file"
         return 1
     fi
     return 0
 }
 
-# Валидация конфига
-validate_config() {
-    local file=$1
-    # Проверка синтаксиса XML
-    if [[ $file == *.xml ]]; then
-        if command -v xmllint >/dev/null 2>&1; then
-            if ! xmllint --noout "$file"; then
-                log "ERROR" "Ошибка валидации XML файла: $file"
-                return 1
-            fi
-        fi
-    fi
-    return 0
-}
-
-# Загрузка переменных из source-файла
+# Загрузка переменных из source файла
 load_variables() {
-    # Объявляем ассоциативный массив
-    declare -A variables
-
     if [ ! -f "$SOURCE_CONFIG" ]; then
-        log "ERROR" "Файл source-конфига не найден: $SOURCE_CONFIG"
+        log "ERROR" "Исходный конфигурационный файл не найден: $SOURCE_CONFIG"
         exit 1
     fi
 
-    log "INFO" "Загрузка переменных из $SOURCE_CONFIG"
     while IFS='=' read -r key value; do
         # Пропускаем пустые строки и комментарии
         [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
-        # Удаляем пробелы
+
+        # Очистка от пробелов
         key=$(echo "$key" | tr -d '[:space:]')
         value=$(echo "$value" | tr -d '[:space:]')
-        variables["$key"]="$value"
+
+        if [ -n "$key" ] && [ -n "$value" ]; then
+            variables[$key]=$value
+        fi
     done < "$SOURCE_CONFIG"
 
-    if [ ${#variables[@]} -eq 0 ]; then
-        log "ERROR" "Не удалось загрузить переменные из source-файла"
-        exit 1
+    # Обработка HOSTNAME
+    if [ "${variables[HOSTNAME]}" = "default" ] || [ -z "${variables[HOSTNAME]}" ]; then
+        variables["HOSTNAME"]=$(hostname)
     fi
-
-    log "INFO" "Загружено ${#variables[@]} переменных"
 }
 
-# Замена переменных в файле
+# Функция замены переменных
 replace_variables() {
     local file=$1
     log "INFO" "Обработка файла: $file"
 
-    # Проверка существования файла
-    if ! check_file_exists "$file"; then
-        return 1
+    if [ "$DRY_RUN" = true ]; then
+        log "INFO" "[DRY-RUN] Симуляция обработки файла: $file"
+        return 0
     fi
 
-    # Проверка прав доступа
     if ! check_permissions "$file"; then
         return 1
     fi
 
-    # Создаем бэкап с временной меткой
     if [ "$BACKUP" = true ]; then
-        local backup_file="${file}.bak.$(date +%Y%m%d_%H%M%S)"
-        cp "$file" "$backup_file"
-        log "INFO" "Создана резервная копия: $backup_file"
+        cp "$file" "${file}.bak"
     fi
 
-    # Создаем временный файл
-    local temp_file=$(mktemp)
-    cp "$file" "$temp_file"
+    cp "$file" "$TEMP_FILE"
 
-    # Счетчик замен
-    local replace_count=0
-
-    # Заменяем переменные
     for key in "${!variables[@]}"; do
         value="${variables[$key]}"
-        # Используем более гибкий grep и sed
-        if grep -q "\${$key}" "$temp_file"; then
-            sed -i "s|\${$key}|$value|g" "$temp_file"
-            ((replace_count++))
-        fi
+        search_pattern="\${$key}"
+        escaped_value=$(printf '%s\n' "$value" | sed 's:[][\/@\#$.*/&]:\\&:g')
+        sed -i "s|$search_pattern|$value|g" "$TEMP_FILE"
     done
 
-    # Проверяем результат
-    if [ $replace_count -eq 0 ]; then
-        log "WARNING" "Не найдено переменных для замены в $file"
+    if cmp -s "$TEMP_FILE" "$file"; then
+        log "INFO" "Никаких изменений для $file"
+        [ "$BACKUP" = true ] && rm "${file}.bak"
     else
-        log "INFO" "Выполнено $replace_count замен в $file"
+        cp "$TEMP_FILE" "$file"
+        log "INFO" "Обновлен файл $file"
     fi
-
-    # Проверяем изменения и валидируем
-    if ! cmp -s "$temp_file" "$file"; then
-        if validate_config "$temp_file"; then
-            cp "$temp_file" "$file"
-            ((found_files++))
-        fi
-    fi
-
-    rm "$temp_file"
 }
 
-# Показ статистики
-show_statistics() {
-    log "INFO" "=== Статистика выполнения ==="
-    log "INFO" "Обработано файлов: $found_files"
-    log "INFO" "Создано резервных копий: $(ls *.bak* 2>/dev/null | wc -l)"
-    log "INFO" "Время выполнения: $SECONDS секунд"
-}
-
-# Вывод справки
-print_usage() {
-    echo "Использование: $0 [-s source_config] [-q] [-b] [-h]"
-    echo "  -s FILE  использовать альтернативный source-файл"
-    echo "  -q       тихий режим"
-    echo "  -b       без создания резервных копий"
-    echo "  -h       показать эту справку"
+# Функция очистки
+cleanup() {
+    [ -n "$TEMP_FILE" ] && [ -f "$TEMP_FILE" ] && rm "$TEMP_FILE"
+    exit 0
 }
 
 # Основная логика
 main() {
-    # Проверка зависимостей
-    check_dependencies
-
-    # Обработка параметров командной строки
-    while getopts "s:qbh" opt; do
-        case $opt in
-            s) SOURCE_CONFIG="$OPTARG" ;;
-            q) VERBOSE=false ;;
-            b) BACKUP=false ;;
-            h) print_usage; exit 0 ;;
-            \?) print_usage; exit 1 ;;
-        esac
-    done
-
-    # Инициализация лога
-    echo "=== Начало выполнения $(date) ===" > "$LOG_FILE"
+    # Создание временного файла
+    TEMP_FILE=$(mktemp)
+    trap cleanup SIGINT SIGTERM EXIT
 
     # Загрузка переменных
     load_variables
-
-    # Проверка наличия файлов в массиве
-    if [ ${#SEARCH_DIRS[@]} -eq 0 ]; then
-        log "ERROR" "Не указаны файлы для обработки в массиве SEARCH_DIRS"
-        exit 1
-    fi
-
-    # Обработка файлов из массива
-    log "INFO" "Начало обработки файлов"
+    # Проверка файлов
+    local found_files=0
     for file in "${SEARCH_DIRS[@]}"; do
-        # Пропускаем закомментированные строки
-        [[ $file =~ ^#.*$ ]] && continue
-        replace_variables "$file"
+        if [ -f "$file" ]; then
+            replace_variables "$file"
+            ((found_files++))
+        else
+            log "WARNING" "Файл не найден: $file"
+        fi
     done
 
-    # Вывод статистики
-    show_statistics
+    if [ $found_files -eq 0 ]; then
+        log "WARNING" "Не найдено ни одного конфигурационного файла"
+    else
+        log "INFO" "Обработка завершена. Обработано файлов: $found_files"
+    fi
 }
 
-# Запуск скрипта
-main "$@"
+# Обработка параметров командной строки
+while getopts "s:qbdhv" opt; do
+    case $opt in
+        s) SOURCE_CONFIG="$OPTARG" ;;
+        q) VERBOSE=false ;;
+        b) BACKUP=false ;;
+        d) DRY_RUN=true ;;
+        h) show_help ;;
+        v) echo "$SCRIPT_NAME версия $VERSION"; exit 0 ;;
+        *) echo "Используйте -h для получения справки"; exit 1 ;;
+    esac
+done
+
+# Запуск основной логики
+main
