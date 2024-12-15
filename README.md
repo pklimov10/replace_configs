@@ -59,3 +59,6 @@ ls -l config.xml
 
 # Проверка лога скрипта (если настроено логирование)
 tail -f script.log
+
+▎Лицензия
+KP © 2024 KlimovPavel. All rights reserved.
