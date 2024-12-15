@@ -164,9 +164,9 @@ replace_variables() {
     # Заменяем переменные
     for key in "${!variables[@]}"; do
         value="${variables[$key]}"
-        search_pattern="\${$key}"
-        if grep -q "$search_pattern" "$temp_file"; then
-            sed -i "s|$search_pattern|$value|g" "$temp_file"
+        # Используем более гибкий grep и sed
+        if grep -q "\${$key}" "$temp_file"; then
+            sed -i "s|\${$key}|$value|g" "$temp_file"
             ((replace_count++))
         fi
     done
