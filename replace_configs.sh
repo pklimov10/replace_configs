@@ -8,6 +8,7 @@
 BASE_CONFIG_DIR="/etc/myapp/configs"           # Базовая директория для конфигураций
 BASE_BACKUP_DIR="/etc/myapp/backups"           # Базовая директория для резервных копий
 BASE_LOG_DIR="/var/log/myapp"                  # Базовая директория для логов
+GOLD_CONFIG_DIR="1/replace_configs/configs/"              # Директория с эталонными конфигурациями
 
 # Настройки групп
 AVAILABLE_GROUPS=("prod" "dev" "test" "stage" "qa")
@@ -68,7 +69,14 @@ SERVER_GROUP=""
 CUSTOM_SOURCE=""
 SOURCE_CONFIG=""
 TEMP_FILE=""
-
+# Пути копирования файлов из GOLD
+declare -A GOLD_TARGET_PATHS=(
+    ["standalone.xml"]="${BASE_CONFIG_DIR}/standalone.xml"
+    ["cmj.properties"]="${BASE_CONFIG_DIR}/cmj.properties"
+    ["server.properties"]="${BASE_CONFIG_DIR}/server.properties"
+    ["standalone.conf"]="${BASE_CONFIG_DIR}/standalone.conf"
+    ["wildfly.conf"]="${BASE_CONFIG_DIR}/wildfly.conf"
+)
 ###########################################
 # ФУНКЦИИ
 ###########################################
@@ -307,27 +315,41 @@ clone_group() {
 create_backup() {
     local group=$1
     local timestamp=$(date '+%Y%m%d_%H%M%S')
-    local backup_dir="/etc/myapp/backups/${group}/${timestamp}"
 
+    # Если группа не указана, используем SERVER_GROUP
     if [[ -z "$group" ]]; then
-        log "ERROR" "Использование: create_backup <группа>"
-        return 1
+        group="${SERVER_GROUP:-default}"
     fi
 
-    # Проверка существования группы
-    if [[ ! " ${AVAILABLE_GROUPS[@]} " =~ " ${group} " ]]; then
+    local backup_dir="${BASE_BACKUP_DIR}/${group}/${timestamp}"
+
+    # Проверка существования группы, если это не 'default'
+    if [[ "$group" != "default" ]] && [[ ! " ${AVAILABLE_GROUPS[@]} " =~ " ${group} " ]]; then
         log "ERROR" "Группа $group не существует"
         return 1
     fi
 
     # Создание директории для бэкапа
-    mkdir -p "$backup_dir"
+    if ! mkdir -p "$backup_dir"; then
+        log "ERROR" "Не удалось создать директорию для бэкапа: $backup_dir"
+        return 1
+    fi
 
     # Копирование конфигурационных файлов
-    cp "${SOURCE_CONFIG_PATHS[$group]}" "$backup_dir/"
+    local config_path="${SOURCE_CONFIG_PATHS[$group]:-$SOURCE_CONFIG}"
+    if [[ -f "$config_path" ]]; then
+        if ! cp "$config_path" "$backup_dir/"; then
+            log "ERROR" "Не удалось скопировать файл $config_path"
+            return 1
+        fi
+    fi
+
     for file in "${SEARCH_DIRS[@]}"; do
         if [[ -f "$file" ]]; then
-            cp "$file" "$backup_dir/"
+            if ! cp "$file" "$backup_dir/"; then
+                log "ERROR" "Не удалось скопировать файл $file"
+                return 1
+            fi
         fi
     done
 
@@ -344,7 +366,7 @@ restore_backup() {
         return 1
     fi
 
-    local backup_dir="/etc/myapp/backups/${group}/${timestamp}"
+    local backup_dir="${BASE_BACKUP_DIR}/${group}/${timestamp}"
 
     if [[ ! -d "$backup_dir" ]]; then
         log "ERROR" "Бэкап не найден: $backup_dir"
@@ -384,7 +406,7 @@ list_backups() {
         return 1
     fi
 
-    local backup_dir="/etc/myapp/backups/${group}"
+    local backup_dir="${BASE_BACKUP_DIR}/${group}"
 
     if [[ ! -d "$backup_dir" ]]; then
         log "INFO" "Бэкапы для группы $group не найдены"
@@ -408,7 +430,7 @@ cleanup_old_backups() {
         return 1
     fi
 
-    local backup_dir="/etc/myapp/backups/${group}"
+    local backup_dir="${BASE_BACKUP_DIR}/${group}"
 
     if [[ ! -d "$backup_dir" ]]; then
         log "INFO" "Нет бэкапов для очистки в группе $group"
@@ -533,6 +555,57 @@ search_variable() {
     done
 }
 
+copy_gold_configs() {
+    local group=$1
+
+    # Если группа не указана, используем SERVER_GROUP
+    if [[ -z "$group" ]]; then
+        group="${SERVER_GROUP:-default}"
+    fi
+
+    # Проверяем существование директории GOLD
+    if [[ ! -d "$GOLD_CONFIG_DIR" ]]; then
+        log "WARNING" "Директория $GOLD_CONFIG_DIR не существует"
+        return 0
+    fi
+
+    local copied_files=0
+    local skipped_files=0
+
+    # Проходим по каждому файлу в GOLD
+    for gold_file in "$GOLD_CONFIG_DIR"/*; do
+        # Проверяем, что это файл
+        if [[ ! -f "$gold_file" ]]; then
+            continue
+        fi
+
+        local filename=$(basename "$gold_file")
+        local target_path="${GOLD_TARGET_PATHS[$filename]}"
+
+        # Проверяем, есть ли для файла целевой путь
+        if [[ -z "$target_path" ]]; then
+            log "WARNING" "Файл $filename из GOLD не имеет соответствующего места назначения"
+            ((skipped_files++))
+            continue
+        fi
+
+        # Создаем резервную копию существующего файла, если он есть
+        if [[ -f "$target_path" ]]; then
+            local backup_file="${target_path}.bak.$(date '+%Y%m%d_%H%M%S')"
+            cp "$target_path" "$backup_file"
+            log "INFO" "Создана резервная копия $target_path как $backup_file"
+        fi
+
+        # Копируем файл
+        cp "$gold_file" "$target_path"
+        log "INFO" "Скопирован файл $filename из GOLD в $target_path"
+
+        ((copied_files++))
+    done
+
+    log "INFO" "Обработка файлов из GOLD завершена. Скопировано: $copied_files, пропущено: $skipped_files"
+    return 0
+}
 ###########################################
 # ОСНОВНАЯ ЛОГИКА
 ###########################################
@@ -653,6 +726,8 @@ check_permissions() {
 # Функция замены переменных
 replace_variables() {
     local file=$1
+    local group=$2  # Добавляем параметр group
+
     log "INFO" "Обработка файла: $file"
 
     if [ "$DRY_RUN" = true ]; then
@@ -666,10 +741,11 @@ replace_variables() {
 
     # Создание резервной копии
     if [ "$BACKUP" = true ]; then
-        cp "$file" "${file}.bak" || {
+        log "INFO" "Создание бэкапа для группы: $group"
+        if ! create_backup "$group"; then
             log "ERROR" "Не удалось создать резервную копию файла: $file"
             return 1
-        }
+        fi
     fi
 
     # Создаем временный файл
@@ -687,7 +763,6 @@ replace_variables() {
     # Проверка изменений
     if cmp -s "$temp_file" "$file"; then
         log "INFO" "Никаких изменений для $file"
-        [ "$BACKUP" = true ] && rm "${file}.bak"
     else
         cp "$temp_file" "$file"
         log "INFO" "Обновлен файл $file"
@@ -708,6 +783,9 @@ main() {
 
     # Загрузка переменных
     load_variables
+
+    # Копирование файлов из GOLD
+    copy_gold_configs "$SERVER_GROUP"
 
     # Обработка файлов
     local found_files=0
