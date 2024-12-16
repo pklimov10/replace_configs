@@ -11,15 +11,15 @@ BASE_LOG_DIR="/var/log/myapp"                  # Базовая директор
 GOLD_CONFIG_DIR="1/replace_configs/configs/"              # Директория с эталонными конфигурациями
 
 # Настройки групп
-AVAILABLE_GROUPS=("prod" "dev" "test" "stage" "qa")
+AVAILABLE_GROUPS=("app" "kma" "rep" "tech" "dev")
 
 # Пути к конфигурационным файлам для каждой группы
 declare -A SOURCE_CONFIG_PATHS=(
-    ["prod"]="${BASE_CONFIG_DIR}/prod/variables.conf"
+    ["app"]="${BASE_CONFIG_DIR}/app/variables.conf"
+    ["kma"]="${BASE_CONFIG_DIR}/kma/variables.conf"
+    ["rep"]="${BASE_CONFIG_DIR}/rep/variables.conf"
+    ["tech"]="${BASE_CONFIG_DIR}/tech/variables.conf"
     ["dev"]="${BASE_CONFIG_DIR}/dev/variables.conf"
-    ["test"]="${BASE_CONFIG_DIR}/test/variables.conf"
-    ["stage"]="${BASE_CONFIG_DIR}/stage/variables.conf"
-    ["qa"]="${BASE_CONFIG_DIR}/qa/variables.conf"
 )
 
 # Конфигурационные файлы для обработки
@@ -54,7 +54,7 @@ SCRIPT_TIMEOUT=3600                           # Таймаут выполнен�
 ###########################################
 
 readonly SCRIPT_NAME=$(basename "$0")
-readonly VERSION="1.2.0"
+readonly VERSION="1.2.1"
 readonly DEFAULT_SOURCE_CONFIG_PATH="${BASE_CONFIG_DIR}/variables.conf"
 
 ###########################################
@@ -648,9 +648,9 @@ show_help() {
     --search-var PATTERN       Найти переменную
 
 Примеры:
-    $SCRIPT_NAME -g prod                    # Запуск для группы prod
+    $SCRIPT_NAME -g dev                    # Запуск для группы dev
     $SCRIPT_NAME --list-groups              # Показать список групп
-    $SCRIPT_NAME --create-backup prod       # Создать бэкап prod
+    $SCRIPT_NAME --create-backup dev       # Создать бэкап dev
     $SCRIPT_NAME --show-vars dev            # Показать переменные dev
 EOF
     exit 0
