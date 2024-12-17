@@ -770,22 +770,22 @@ check_permissions() {
 }
 # Функция замены переменных
 replace_variables() {
-    local file=$1
+    local input_file=$1
     local group=$2
 
-    log "INFO" "Обработка файла: $file"
+    log "INFO" "Обработка файла: $input_file"
 
-    if [ ! -f "$file" ]; then
-        log "ERROR" "Файл не существует: $file"
+    if [ ! -f "$input_file" ]; then
+        log "ERROR" "Файл не существует: $input_file"
         return 1
     fi
 
     if [ "$DRY_RUN" = true ]; then
-        log "INFO" "[DRY-RUN] Симуляция обработки файла: $file"
+        log "INFO" "[DRY-RUN] Симуляция обработки файла: $input_file"
         return 0
     fi
 
-    if ! check_permissions "$file"; then
+    if ! check_permissions "$input_file"; then
         return 1
     fi
 
@@ -793,17 +793,17 @@ replace_variables() {
     if [ "$BACKUP" = true ]; then
         log "INFO" "Создание бэкапа для группы: $group"
         if ! create_backup "$group"; then
-            log "ERROR" "Не удалось создать резервную копию файла: $file"
+            log "ERROR" "Не удалось создать резервную копию файла: $input_file"
             return 1
         fi
     fi
 
     # Создаем временный файл
     local temp_file=$(mktemp)
-    cp "$file" "$temp_file"
+    cp "$input_file" "$temp_file"
 
     # Добавляем отладочную информацию
-    log "INFO" "Начало замены переменных в файле: $file"
+    log "INFO" "Начало замены переменных в файле: $input_file"
     log "INFO" "Количество переменных для замены: ${#variables[@]}"
 
     # Замена переменных
@@ -812,7 +812,7 @@ replace_variables() {
         search_pattern="\\\${$key}"  # Экранируем $ для корректного поиска
 
         # Отладочная информация
-        log "INFO" "Заменяем переменную: $key = $value"
+        log "DEBUG" "Заменяем переменную '$key' значением '$value' в файле $input_file"
 
         # Экранируем специальные символы в значении
         escaped_value=$(printf '%s\n' "$value" | sed 's/[&/\]/\\&/g')
@@ -822,29 +822,51 @@ replace_variables() {
 
         # Проверяем успешность замены
         if grep -q "$search_pattern" "$temp_file"; then
-            log "WARNING" "Возможно, не все вхождения $key были заменены"
+            log "WARNING" "Возможно, не все вхождения $key были заменены в файле $input_file"
         fi
     done
 
     # Проверка изменений
-    if ! cmp -s "$temp_file" "$file"; then
+    if ! cmp -s "$temp_file" "$input_file"; then
         # Файлы различаются - копируем изменения
-        cp "$temp_file" "$file"
-        log "INFO" "Обновлен файл $file"
+        cp "$temp_file" "$input_file"
+        log "INFO" "Обновлен файл $input_file"
 
         # Дополнительная проверка
-        if [ -f "$file" ]; then
-            log "INFO" "Файл успешно обновлен: $file"
+        if [ -f "$input_file" ]; then
+            log "INFO" "Файл успешно обновлен: $input_file"
+
+            # Добавляем проверку содержимого файла после обновления
+            log "DEBUG" "Проверка обновленного файла $input_file"
+            if grep -q '\${' "$input_file"; then
+                log "WARNING" "В файле $input_file остались незамененные переменные"
+            else
+                log "INFO" "Все переменные успешно заменены в файле $input_file"
+            fi
         else
-            log "ERROR" "Ошибка при обновлении файла: $file"
+            log "ERROR" "Ошибка при обновлении файла: $input_file"
         fi
     else
-        log "INFO" "Никаких изменений для $file"
+        log "INFO" "Никаких изменений для $input_file"
     fi
 
     # Удаляем временный файл
     rm -f "$temp_file"
 
+    return 0
+}
+# Вспомогательная функция для проверки переменных в файле
+check_remaining_variables() {
+    local file=$1
+    log "INFO" "Проверка оставшихся переменных в файле: $file"
+
+    if grep -q '\${' "$file"; then
+        log "WARNING" "Найдены незамененные переменные в файле $file:"
+        grep '\${[^}]*}' "$file" | while read -r line; do
+            log "WARNING" "  $line"
+        done
+        return 1
+    fi
     return 0
 }
 check_search_dirs() {
@@ -868,23 +890,8 @@ main() {
     check_dependencies
     init_directories
 
-    # Проверка массива SEARCH_DIRS
-    log "INFO" "Количество файлов в SEARCH_DIRS: ${#SEARCH_DIRS[@]}"
-    for file in "${SEARCH_DIRS[@]}"; do
-        log "INFO" "Файл в массиве: $file"
-    done
-
-    # Добавляем проверку файлов
-    check_search_dirs
-
     # Загрузка переменных
     load_variables
-
-    # Отладочная информация о загруженных переменных
-    log "INFO" "Загруженные переменные:"
-    for key in "${!variables[@]}"; do
-        log "INFO" "  $key = ${variables[$key]}"
-    done
 
     # Копирование файлов из GOLD
     copy_gold_configs "$SERVER_GROUP"
@@ -893,19 +900,33 @@ main() {
     local found_files=0
     local processed_files=0
 
-    # Явно перебираем массив
-    for ((i=0; i<${#SEARCH_DIRS[@]}; i++)); do
-        file="${SEARCH_DIRS[i]}"
-        log "INFO" "Обработка файла $((i+1))/${#SEARCH_DIRS[@]}: $file"
+    # Показываем все файлы, которые будем обрабатывать
+    log "INFO" "Список файлов для обработки:"
+    for file in "${SEARCH_DIRS[@]}"; do
+        log "INFO" "  $file"
+    done
+
+    # Обработка каждого файла
+    for file in "${SEARCH_DIRS[@]}"; do
+        log "INFO" "Начало обработки файла: $file"
 
         if [ -f "$file" ]; then
             ((found_files++))
-            log "INFO" "Найден файл: $file"
-            if replace_variables "$file" "$SERVER_GROUP"; then
-                ((processed_files++))
-                log "INFO" "Успешно обработан файл: $file"
+            log "INFO" "Файл найден: $file"
+
+            # Проверяем наличие переменных для замены
+            if grep -q '\${' "$file"; then
+                log "INFO" "Найдены переменные для замены в файле: $file"
+                if replace_variables "$file" "$SERVER_GROUP"; then
+                    ((processed_files++))
+                    log "INFO" "Файл успешно обработан: $file"
+                    # Проверяем, остались ли незамененные переменные
+                    check_remaining_variables "$file"
+                else
+                    log "ERROR" "Ошибка при обработке файла: $file"
+                fi
             else
-                log "ERROR" "Ошибка при обработке файла: $file"
+                log "INFO" "В файле $file нет переменных для замены"
             fi
         else
             log "WARNING" "Файл не найден: $file"
