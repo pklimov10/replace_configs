@@ -771,16 +771,16 @@ replace_variables() {
     if [ ! -f "$file" ]; then
         log "ERROR" "Файл не существует: $file"
         return 1
-    }
+    fi
 
     if [ "$DRY_RUN" = true ]; then
         log "INFO" "[DRY-RUN] Симуляция обработки файла: $file"
         return 0
-    }
+    fi
 
     if ! check_permissions "$file"; then
         return 1
-    }
+    fi
 
     # Создание резервной копии
     if [ "$BACKUP" = true ]; then
