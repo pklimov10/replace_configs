@@ -634,13 +634,6 @@ copy_gold_configs() {
             continue
         fi
 
-        # Создаем резервную копию существующего файла, если он есть
-        if [[ -f "$target_path" ]]; then
-            local backup_file="${target_path}.bak.$(date '+%Y%m%d_%H%M%S')"
-            cp "$target_path" "$backup_file"
-            log "INFO" "Создана резервная копия $target_path как $backup_file"
-        fi
-
         # Копируем файл
         cp "$gold_file" "$target_path"
         log "INFO" "Скопирован файл $filename из GOLD в $target_path"
