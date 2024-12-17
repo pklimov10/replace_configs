@@ -5,30 +5,59 @@
 ###########################################
 
 # Базовые пути
-BASE_CONFIG_DIR="/etc/myapp/configs"           # Базовая директория для конфигураций
-BASE_BACKUP_DIR="/etc/myapp/backups"           # Базовая директория для резервных копий
-BASE_LOG_DIR="/var/log/myapp"                  # Базовая директория для логов
-GOLD_CONFIG_DIR="1/replace_configs/configs/"              # Директория с эталонными конфигурациями
+WF_HOME="/opt/wildfly"                        # Директория WildFly
+BASE_CONFIG_DIR="./configs"           # Базовая директория для конфигураций
+BASE_BACKUP_DIR="./backups"           # Базовая директория для резервных копий
+BASE_LOG_DIR="./log"                  # Базовая директория для логов
+GOLD_CONFIG_DIR="./GOLD_CONFIG"              # Директория с эталонными конфигурациями
+# Настройки групп
+GROUPS_CONFIG="${BASE_CONFIG_DIR}/groups.conf"  # файл для хранения групп
 
 # Настройки групп
-AVAILABLE_GROUPS=("app" "kma" "rep" "tech" "dev")
-
+#AVAILABLE_GROUPS=("app" "kma" "rep" "tech" "dev")
 # Пути к конфигурационным файлам для каждой группы
-declare -A SOURCE_CONFIG_PATHS=(
-    ["app"]="${BASE_CONFIG_DIR}/app/variables.conf"
-    ["kma"]="${BASE_CONFIG_DIR}/kma/variables.conf"
-    ["rep"]="${BASE_CONFIG_DIR}/rep/variables.conf"
-    ["tech"]="${BASE_CONFIG_DIR}/tech/variables.conf"
-    ["dev"]="${BASE_CONFIG_DIR}/dev/variables.conf"
-)
+load_groups() {
+    AVAILABLE_GROUPS=()
+    SOURCE_CONFIG_PATHS=()
+
+    if [[ ! -f "$GROUPS_CONFIG" ]]; then
+        # Инициализация файла групп по умолчанию
+        touch "$GROUPS_CONFIG"
+        echo "app:${BASE_CONFIG_DIR}/app/variables.conf" >> "$GROUPS_CONFIG"
+        echo "kma:${BASE_CONFIG_DIR}/kma/variables.conf" >> "$GROUPS_CONFIG"
+        echo "rep:${BASE_CONFIG_DIR}/rep/variables.conf" >> "$GROUPS_CONFIG"
+        echo "tech:${BASE_CONFIG_DIR}/tech/variables.conf" >> "$GROUPS_CONFIG"
+        echo "dev:${BASE_CONFIG_DIR}/dev/variables.conf" >> "$GROUPS_CONFIG"
+    fi
+
+    # Чтение групп из файла
+    while IFS=':' read -r group config_path; do
+        AVAILABLE_GROUPS+=("$group")
+        SOURCE_CONFIG_PATHS["$group"]="$config_path"
+    done < "$GROUPS_CONFIG"
+}
+
+# Вызываем загрузку групп при инициализации
+save_groups() {
+    # Очистка текущего файла групп
+    > "$GROUPS_CONFIG"
+
+    # Сохранение текущих групп
+    for group in "${AVAILABLE_GROUPS[@]}"; do
+        echo "$group:${SOURCE_CONFIG_PATHS[$group]}" >> "$GROUPS_CONFIG"
+    done
+}
+
+# Вызываем загрузку групп при инициализации
+load_groups
 
 # Конфигурационные файлы для обработки
 SEARCH_DIRS=(
-    "${BASE_CONFIG_DIR}/standalone.xml"
-    "${BASE_CONFIG_DIR}/cmj.properties"
-    "${BASE_CONFIG_DIR}/server.properties"
-    "${BASE_CONFIG_DIR}/standalone.conf"
-    "${BASE_CONFIG_DIR}/wildfly.conf"
+    "${WF_HOME}/standalone.xml"
+    "${WF_HOME}/cmj.properties"
+    "${WF_HOME}/server.properties"
+    "${WF_HOME}/standalone.conf"
+    "${WF_HOME}/wildfly.conf"
 )
 
 # Настройки бэкапов
@@ -71,12 +100,22 @@ SOURCE_CONFIG=""
 TEMP_FILE=""
 # Пути копирования файлов из GOLD
 declare -A GOLD_TARGET_PATHS=(
-    ["standalone.xml"]="${BASE_CONFIG_DIR}/standalone.xml"
-    ["cmj.properties"]="${BASE_CONFIG_DIR}/cmj.properties"
-    ["server.properties"]="${BASE_CONFIG_DIR}/server.properties"
-    ["standalone.conf"]="${BASE_CONFIG_DIR}/standalone.conf"
-    ["wildfly.conf"]="${BASE_CONFIG_DIR}/wildfly.conf"
+    ["standalone.xml"]="${WF_HOME}/standalone.xml"
+    ["cmj.properties"]="${WF_HOME}/cmj.properties"
+    ["server.properties"]="${WF_HOME}/server.properties"
+    ["standalone.conf"]="${WF_HOME}/standalone.conf"
+    ["wildfly.conf"]="${WF_HOME}/wildfly.conf"
 )
+
+group_exists() {
+    local group=$1
+    for existing_group in "${AVAILABLE_GROUPS[@]}"; do
+        if [[ "$existing_group" == "$group" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 ###########################################
 # ФУНКЦИИ
 ###########################################
@@ -180,12 +219,10 @@ add_group() {
     fi
 
     # Проверка существования группы
-    for group in "${AVAILABLE_GROUPS[@]}"; do
-        if [[ "$group" == "$new_group" ]]; then
-            log "ERROR" "Группа $new_group уже существует"
-            return 1
-        fi
-    done
+    if group_exists "$new_group"; then
+        log "ERROR" "Группа $new_group уже существует"
+        return 1
+    fi
 
     # Добавление новой группы
     AVAILABLE_GROUPS+=("$new_group")
@@ -194,6 +231,9 @@ add_group() {
     # Создание директории для конфига если она не существует
     mkdir -p "$(dirname "$config_path")"
     touch "$config_path"
+
+    # Сохраняем обновленные группы
+    save_groups
 
     log "INFO" "Добавлена новая группа: $new_group с конфигом: $config_path"
 }
@@ -207,22 +247,25 @@ remove_group() {
     fi
 
     # Проверка существования группы
-    local found=false
+    if ! group_exists "$group"; then
+        log "ERROR" "Группа $group не найдена"
+        return 1
+    fi
+
+    # Удаление группы
     for i in "${!AVAILABLE_GROUPS[@]}"; do
         if [[ "${AVAILABLE_GROUPS[$i]}" == "$group" ]]; then
             unset 'AVAILABLE_GROUPS[$i]'
-            found=true
             break
         fi
     done
 
-    if [[ "$found" == true ]]; then
-        unset "SOURCE_CONFIG_PATHS[$group]"
-        log "INFO" "Группа $group удалена"
-    else
-        log "ERROR" "Группа $group не найдена"
-        return 1
-    fi
+    unset "SOURCE_CONFIG_PATHS[$group]"
+
+    # Сохраняем обновленные группы
+    save_groups
+
+    log "INFO" "Группа $group удалена"
 }
 
 rename_group() {
@@ -270,7 +313,8 @@ rename_group() {
         SOURCE_CONFIG_PATHS["$new_name"]="${SOURCE_CONFIG_PATHS[$old_name]}"
         unset "SOURCE_CONFIG_PATHS[$old_name]"
     fi
-
+    # Сохраняем обновленные группы
+    save_groups
     log "INFO" "Группа $old_name переименована в $new_name"
 }
 
@@ -306,7 +350,8 @@ clone_group() {
     # Добавление новой группы
     AVAILABLE_GROUPS+=("$target_group")
     SOURCE_CONFIG_PATHS["$target_group"]="$target_path"
-
+    # Сохраняем обновленные группы
+    save_groups
     log "INFO" "Группа $source_group успешно клонирована в $target_group"
 }
 
