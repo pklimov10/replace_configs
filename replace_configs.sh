@@ -84,7 +84,7 @@ SCRIPT_TIMEOUT=3600                           # Таймаут выполнен�
 
 readonly SCRIPT_NAME=$(basename "$0")
 readonly VERSION="1.2.3"
-readonly DEFAULT_SOURCE_CONFIG_PATH="${BASE_CONFIG_DIR}/variables.conf"
+readonly DEFAULT_SOURCE_CONFIG_PATH="${BASE_CONFIG_DIR}/default_variables.conf"
 
 ###########################################
 # ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
