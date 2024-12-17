@@ -10,8 +10,19 @@ BASE_CONFIG_DIR="./configs"           # Базовая директория дл
 BASE_BACKUP_DIR="./backups"           # Базовая директория для резервных копий
 BASE_LOG_DIR="./log"                  # Базовая директория для логов
 GOLD_CONFIG_DIR="./GOLD_CONFIG"              # Директория с эталонными конфигурациями
+JAVA_HOME="/opt/jdk1.8.0_332-linux-x64/java-linux-x64"    # Директория JDK
 # Настройки групп
 GROUPS_CONFIG="${BASE_CONFIG_DIR}/groups.conf"  # файл для хранения групп
+
+# Настройки сертификатов
+CERT_BASE_DIR="${BASE_CONFIG_DIR}/certificates"  # Базовая директория для сертификатов
+CERT_TEMPLATE_JKS="./JKS/template.jks"        # Путь к шаблону JKS
+CERT_DEFAULT_DAYS=3650                        # Срок действия сертификата по умолчанию
+CERT_DEFAULT_KEY_SIZE=2048                    # Размер RSA ключа по умолчанию
+CERT_DEFAULT_PASSWORD="superpass!23"          # Пароль по умолчанию
+CERT_COUNTRY="RU"                             # Страна по умолчанию
+CERT_LOCATION="Moscow"                        # Локация по умолчанию
+CERT_ORGANIZATION="InterTrust"                # Организация по умолчанию
 
 # Настройки групп
 #AVAILABLE_GROUPS=("app" "kma" "rep" "tech" "dev")
@@ -77,6 +88,8 @@ SECURE_DIRECTORIES="0755"                      # Права доступа дл�
 TEMP_DIR="/tmp/config_manager"                # Директория для временных файлов
 LOCK_FILE="/tmp/config_manager.lock"          # Файл блокировки для предотвращения параллельного запуска
 SCRIPT_TIMEOUT=3600                           # Таймаут выполнения скрипта (в секундах)
+# Настройки сертификатов
+CERT_GENERATION_ENABLED="false"               # По умолчанию генерация сертификатов выключена
 
 ###########################################
 # СИСТЕМНЫЕ КОНСТАНТЫ (не изменять)
@@ -651,14 +664,13 @@ copy_gold_configs() {
 # Обработка сигналов
 trap cleanup EXIT INT TERM
 
-# Функция вывода справки
 show_help() {
     cat << EOF
 Использование: $SCRIPT_NAME [ОПЦИИ]
-Управление конфигурациями с поддержкой групп серверов.
+Управление конфигурациями с поддержкой групп серверов и генерации сертификатов.
 
 Основные опции:
-    -g GROUP   Указать группу серверов (${AVAILABLE_GROUPS[*]})
+    -g GROUP   Указать группу серверов
     -s FILE    Использовать альтернативный source-файл
     -q         Тихий режим
     -b         Без создания резервных копий
@@ -673,10 +685,21 @@ show_help() {
     --rename-group OLD NEW     Переименовать группу
     --clone-group SRC DST      Клонировать группу
 
+Управление сертификатами:
+    --generate-cert NAME       Создать сертификат
+    --list-certs               Показать список сертификатов
+    --enable-cert-gen          Включить генерацию сертификатов
+    --cert-days N              Срок действия сертификата (дней)
+    --cert-key-size N          Размер RSA ключа
+    --cert-password PASS       Пароль для сертификатов
+    --cert-country CODE        Страна
+    --cert-location LOC        Локация
+    --cert-org ORG             Организация
+
 Управление бэкапами:
     --create-backup GROUP      Создать резервную копию
     --restore-backup GROUP TS  Восстановить из резервной копии
-    --list-backups GROUP      Показать список резервных копий
+    --list-backups GROUP       Показать список резервных копий
     --cleanup-backups GROUP    Очистить старые резервные копии
 
 Управление переменными:
@@ -686,10 +709,9 @@ show_help() {
     --search-var PATTERN       Найти переменную
 
 Примеры:
-    $SCRIPT_NAME -g dev                    # Запуск для группы dev
-    $SCRIPT_NAME --list-groups              # Показать список групп
-    $SCRIPT_NAME --create-backup dev       # Создать бэкап dev
-    $SCRIPT_NAME --show-vars dev            # Показать переменные dev
+    $SCRIPT_NAME -g dev                     # Запуск для группы dev
+    $SCRIPT_NAME --generate-cert example.com # Создать сертификат
+    $SCRIPT_NAME --enable-cert-gen          # Включить генерацию сертификатов
 EOF
     exit 0
 }
@@ -881,6 +903,108 @@ check_search_dirs() {
     done
 }
 
+###########################################
+# ФУНКЦИИ ДЛЯ РАБОТЫ С СЕРТИФИКАТАМИ
+###########################################
+
+generate_certificate() {
+    # Проверка включения генерации сертификатов
+    if [[ "$CERT_GENERATION_ENABLED" != "true" ]]; then
+        log "ERROR" "Генерация сертификатов отключена. Используйте --enable-cert-gen"
+        return 1
+    fi
+
+    local dns_name=$1
+
+    # Проверка обязательных параметров
+    if [[ -z "$dns_name" ]]; then
+        log "ERROR" "Не указано DNS-имя для сертификата"
+        return 1
+    fi
+
+    # Создание директории для сертификатов
+    mkdir -p "$CERT_BASE_DIR"
+
+    # Проверка наличия шаблона JKS
+    if [[ ! -f "$CERT_TEMPLATE_JKS" ]]; then
+        log "ERROR" "Шаблон JKS не найден: $CERT_TEMPLATE_JKS"
+        return 1
+    fi
+
+    # Переход в директорию сертификатов
+    cd "$CERT_BASE_DIR"
+
+    # Создание директории для конкретного сертификата
+    mkdir -p "$dns_name"
+    cd "$dns_name"
+
+    # Копирование шаблона JKS
+    cp "$CERT_TEMPLATE_JKS" "$dns_name.jks"
+
+    # Создание конфигурационного файла
+    cat << EOF > config.cfg
+[req]
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+prompt = no
+[req_distinguished_name]
+C = $CERT_COUNTRY
+L = $CERT_LOCATION
+O = $CERT_ORGANIZATION
+CN = $dns_name
+[v3_req]
+keyUsage = critical, digitalSignature, keyAgreement
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = $dns_name
+EOF
+
+    # Генерация ключа и сертификата
+    openssl req -x509 -nodes -days "$CERT_DEFAULT_DAYS" -newkey "rsa:$CERT_DEFAULT_KEY_SIZE" \
+        -keyout "$dns_name.key" \
+        -out "$dns_name.crt" \
+        -config config.cfg \
+        -sha256
+
+    # Создание PKCS12
+    openssl pkcs12 -export \
+        -in "$dns_name.crt" \
+        -inkey "$dns_name.key" \
+        -out "$dns_name.p12" \
+        -name "$dns_name" \
+        -password "pass:$CERT_DEFAULT_PASSWORD"
+
+    # Импорт в JKS
+    $JAVA_HOME/bin/keytool -v -importkeystore \
+        -srckeystore "$dns_name.p12" \
+        -srcstorepass "$CERT_DEFAULT_PASSWORD" \
+        -srcstoretype PKCS12 \
+        -destkeystore "$dns_name.jks" \
+        -deststoretype JKS \
+        -deststorepass "$CERT_DEFAULT_PASSWORD"
+
+    # Удаление временного конфига
+    rm config.cfg
+
+    log "INFO" "Сертификат для $dns_name успешно сгенерирован в $CERT_BASE_DIR/$dns_name"
+}
+
+list_certificates() {
+    if [[ ! -d "$CERT_BASE_DIR" ]]; then
+        log "INFO" "Директория сертификатов не существует"
+        return 0
+    fi
+
+    log "INFO" "Список сгенерированных сертификатов:"
+    for cert_subdir in "$CERT_BASE_DIR"/*; do
+        if [[ -d "$cert_subdir" ]]; then
+            local cert_name=$(basename "$cert_subdir")
+            echo "- $cert_name"
+        fi
+    done
+}
+
 # Измененная основная функция main()
 main() {
     # Установка блокировки
@@ -941,9 +1065,10 @@ main() {
 }
 
 
-# Парсинг аргументов командной строки и запуск соответствующих функций
+# Парсинг аргументов
 while [[ $# -gt 0 ]]; do
     case $1 in
+        # Существующие опции
         -g) SERVER_GROUP="$2"; shift 2 ;;
         -s) CUSTOM_SOURCE="$2"; shift 2 ;;
         -q) VERBOSE=false; shift ;;
@@ -951,6 +1076,46 @@ while [[ $# -gt 0 ]]; do
         -d) DRY_RUN=true; shift ;;
         -h) show_help ;;
         -v) echo "$SCRIPT_NAME версия $VERSION"; exit 0 ;;
+
+        # Новые опции для сертификатов
+        --generate-cert)
+            generate_certificate "$2"
+            exit $?
+            ;;
+        --list-certs)
+            list_certificates
+            exit $?
+            ;;
+        --enable-cert-gen)
+            CERT_GENERATION_ENABLED="true"
+            shift
+            ;;
+        --cert-days)
+            CERT_DEFAULT_DAYS="$2"
+            shift 2
+            ;;
+        --cert-key-size)
+            CERT_DEFAULT_KEY_SIZE="$2"
+            shift 2
+            ;;
+        --cert-password)
+            CERT_DEFAULT_PASSWORD="$2"
+            shift 2
+            ;;
+        --cert-country)
+            CERT_COUNTRY="$2"
+            shift 2
+            ;;
+        --cert-location)
+            CERT_LOCATION="$2"
+            shift 2
+            ;;
+        --cert-org)
+            CERT_ORGANIZATION="$2"
+            shift 2
+            ;;
+
+        # Существующие опции для групп и прочего
         --list-groups) list_groups; exit 0 ;;
         --add-group) add_group "$2" "$3"; exit $?; shift 3 ;;
         --remove-group) remove_group "$2"; exit $?; shift 2 ;;
