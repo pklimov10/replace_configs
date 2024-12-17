@@ -697,6 +697,8 @@ select_config_file() {
     local group=$1
     local custom_source=$2
 
+    log "INFO" "Выбор конфигурационного файла для группы: $group"
+
     # Если передан кастомный source-файл, используем его
     if [[ -n "$custom_source" ]]; then
         if [[ ! -f "$custom_source" ]]; then
@@ -704,6 +706,7 @@ select_config_file() {
             exit 1
         fi
         SOURCE_CONFIG="$custom_source"
+        log "INFO" "Используется кастомный файл конфигурации: $SOURCE_CONFIG"
         return 0
     fi
 
@@ -711,6 +714,7 @@ select_config_file() {
     if [[ -n "$group" ]]; then
         if [[ -f "${SOURCE_CONFIG_PATHS[$group]}" ]]; then
             SOURCE_CONFIG="${SOURCE_CONFIG_PATHS[$group]}"
+            log "INFO" "Используется файл конфигурации группы: $SOURCE_CONFIG"
         else
             log "WARNING" "Файл конфигурации для группы $group не найден. Используется файл по умолчанию."
             SOURCE_CONFIG="$DEFAULT_SOURCE_CONFIG_PATH"
@@ -718,6 +722,7 @@ select_config_file() {
     else
         # Если группа не указана, используем дефолтный файл
         SOURCE_CONFIG="$DEFAULT_SOURCE_CONFIG_PATH"
+        log "INFO" "Используется файл конфигурации по умолчанию: $SOURCE_CONFIG"
     fi
 
     # Проверяем существование выбранного файла
@@ -725,6 +730,8 @@ select_config_file() {
         log "ERROR" "Конфигурационный файл не найден: $SOURCE_CONFIG"
         exit 1
     fi
+
+    log "INFO" "Выбран конфигурационный файл: $SOURCE_CONFIG"
 }
 
 # Загрузка переменных из source файла
@@ -840,9 +847,19 @@ replace_variables() {
 
     return 0
 }
+check_search_dirs() {
+    log "INFO" "Проверка файлов в SEARCH_DIRS:"
+    for file in "${SEARCH_DIRS[@]}"; do
+        if [ -f "$file" ]; then
+            log "INFO" "Файл существует: $file"
+            ls -l "$file"  # Показать права доступа и владельца
+        else
+            log "ERROR" "Файл не найден: $file"
+        fi
+    done
+}
 
-
-# Основная функция
+# Измененная основная функция main()
 main() {
     # Установка блокировки
     set_lock
@@ -851,8 +868,23 @@ main() {
     check_dependencies
     init_directories
 
+    # Проверка массива SEARCH_DIRS
+    log "INFO" "Количество файлов в SEARCH_DIRS: ${#SEARCH_DIRS[@]}"
+    for file in "${SEARCH_DIRS[@]}"; do
+        log "INFO" "Файл в массиве: $file"
+    done
+
+    # Добавляем проверку файлов
+    check_search_dirs
+
     # Загрузка переменных
     load_variables
+
+    # Отладочная информация о загруженных переменных
+    log "INFO" "Загруженные переменные:"
+    for key in "${!variables[@]}"; do
+        log "INFO" "  $key = ${variables[$key]}"
+    done
 
     # Копирование файлов из GOLD
     copy_gold_configs "$SERVER_GROUP"
@@ -861,11 +893,19 @@ main() {
     local found_files=0
     local processed_files=0
 
-    for file in "${SEARCH_DIRS[@]}"; do
+    # Явно перебираем массив
+    for ((i=0; i<${#SEARCH_DIRS[@]}; i++)); do
+        file="${SEARCH_DIRS[i]}"
+        log "INFO" "Обработка файла $((i+1))/${#SEARCH_DIRS[@]}: $file"
+
         if [ -f "$file" ]; then
             ((found_files++))
-            if replace_variables "$file"; then
+            log "INFO" "Найден файл: $file"
+            if replace_variables "$file" "$SERVER_GROUP"; then
                 ((processed_files++))
+                log "INFO" "Успешно обработан файл: $file"
+            else
+                log "ERROR" "Ошибка при обработке файла: $file"
             fi
         else
             log "WARNING" "Файл не найден: $file"
@@ -878,6 +918,7 @@ main() {
         log "INFO" "Обработка завершена. Найдено файлов: $found_files, обработано: $processed_files"
     fi
 }
+
 
 # Парсинг аргументов командной строки и запуск соответствующих функций
 while [[ $# -gt 0 ]]; do
