@@ -764,18 +764,23 @@ check_permissions() {
 # Функция замены переменных
 replace_variables() {
     local file=$1
-    local group=$2  # Добавляем параметр group
+    local group=$2
 
     log "INFO" "Обработка файла: $file"
+
+    if [ ! -f "$file" ]; then
+        log "ERROR" "Файл не существует: $file"
+        return 1
+    }
 
     if [ "$DRY_RUN" = true ]; then
         log "INFO" "[DRY-RUN] Симуляция обработки файла: $file"
         return 0
-    fi
+    }
 
     if ! check_permissions "$file"; then
         return 1
-    fi
+    }
 
     # Создание резервной копии
     if [ "$BACKUP" = true ]; then
@@ -790,25 +795,52 @@ replace_variables() {
     local temp_file=$(mktemp)
     cp "$file" "$temp_file"
 
+    # Добавляем отладочную информацию
+    log "INFO" "Начало замены переменных в файле: $file"
+    log "INFO" "Количество переменных для замены: ${#variables[@]}"
+
     # Замена переменных
     for key in "${!variables[@]}"; do
         value="${variables[$key]}"
-        search_pattern="\${$key}"
-        escaped_value=$(printf '%s\n' "$value" | sed 's:[][\/@\#$.*/&]:\\&:g')
-        sed -i "s|$search_pattern|$value|g" "$temp_file"
+        search_pattern="\\\${$key}"  # Экранируем $ для корректного поиска
+
+        # Отладочная информация
+        log "INFO" "Заменяем переменную: $key = $value"
+
+        # Экранируем специальные символы в значении
+        escaped_value=$(printf '%s\n' "$value" | sed 's/[&/\]/\\&/g')
+
+        # Используем perl для более надежной замены
+        perl -i -pe "s/$search_pattern/$escaped_value/g" "$temp_file"
+
+        # Проверяем успешность замены
+        if grep -q "$search_pattern" "$temp_file"; then
+            log "WARNING" "Возможно, не все вхождения $key были заменены"
+        fi
     done
 
     # Проверка изменений
-    if cmp -s "$temp_file" "$file"; then
-        log "INFO" "Никаких изменений для $file"
-    else
+    if ! cmp -s "$temp_file" "$file"; then
+        # Файлы различаются - копируем изменения
         cp "$temp_file" "$file"
         log "INFO" "Обновлен файл $file"
+
+        # Дополнительная проверка
+        if [ -f "$file" ]; then
+            log "INFO" "Файл успешно обновлен: $file"
+        else
+            log "ERROR" "Ошибка при обновлении файла: $file"
+        fi
+    else
+        log "INFO" "Никаких изменений для $file"
     fi
 
     # Удаляем временный файл
-    rm "$temp_file"
+    rm -f "$temp_file"
+
+    return 0
 }
+
 
 # Основная функция
 main() {
