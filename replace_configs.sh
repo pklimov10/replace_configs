@@ -931,63 +931,141 @@ generate_certificate() {
         return 1
     fi
 
-    # Переход в директорию сертификатов
-    cd "$CERT_BASE_DIR"
-
     # Создание директории для конкретного сертификата
-    mkdir -p "$dns_name"
-    cd "$dns_name"
+    local cert_dir="$CERT_BASE_DIR/$dns_name"
+    mkdir -p "$cert_dir"
 
-    # Копирование шаблона JKS
-    cp "$CERT_TEMPLATE_JKS" "$dns_name.jks"
+    # Пароль для всех операций
+    local CERT_PASSWORD="$CERT_DEFAULT_PASSWORD"
 
-    # Создание конфигурационного файла
-    cat << EOF > config.cfg
+    log "INFO" "Начало генерации сертификата для $dns_name"
+    log "INFO" "Используемый пароль: $CERT_PASSWORD"
+    log "INFO" "Директория сертификатов: $cert_dir"
+
+    # Создание конфигурационного файла OpenSSL
+    local config_file="$cert_dir/openssl.cnf"
+    cat << EOF > "$config_file"
 [req]
 distinguished_name = req_distinguished_name
 x509_extensions = v3_req
 prompt = no
+
 [req_distinguished_name]
 C = $CERT_COUNTRY
 L = $CERT_LOCATION
 O = $CERT_ORGANIZATION
 CN = $dns_name
+
 [v3_req]
 keyUsage = critical, digitalSignature, keyAgreement
 extendedKeyUsage = serverAuth
 subjectAltName = @alt_names
+
 [alt_names]
 DNS.1 = $dns_name
 EOF
 
-    # Генерация ключа и сертификата
-    openssl req -x509 -nodes -days "$CERT_DEFAULT_DAYS" -newkey "rsa:$CERT_DEFAULT_KEY_SIZE" \
-        -keyout "$dns_name.key" \
-        -out "$dns_name.crt" \
-        -config config.cfg \
+    # 1. Генерация приватного ключа и самоподписанного сертификата
+    local key_file="$cert_dir/$dns_name.key"
+    local crt_file="$cert_dir/$dns_name.crt"
+    log "INFO" "Шаг 1: Генерация приватного ключа и сертификата"
+
+    openssl req -x509 \
+        -nodes \
+        -days "$CERT_DEFAULT_DAYS" \
+        -newkey "rsa:$CERT_DEFAULT_KEY_SIZE" \
+        -keyout "$key_file" \
+        -out "$crt_file" \
+        -config "$config_file" \
+        -subj "/C=$CERT_COUNTRY/L=$CERT_LOCATION/O=$CERT_ORGANIZATION/CN=$dns_name" \
         -sha256
 
-    # Создание PKCS12
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Ошибка при создании сертификата"
+        return 1
+    fi
+
+    # 2. Создание PKCS12
+    local p12_file="$cert_dir/$dns_name.p12"
+    log "INFO" "Шаг 2: Создание PKCS12"
+
     openssl pkcs12 -export \
-        -in "$dns_name.crt" \
-        -inkey "$dns_name.key" \
-        -out "$dns_name.p12" \
+        -in "$crt_file" \
+        -inkey "$key_file" \
+        -out "$p12_file" \
         -name "$dns_name" \
-        -password "pass:$CERT_DEFAULT_PASSWORD"
+        -passout "pass:$CERT_PASSWORD" \
+        -passin "pass:$CERT_PASSWORD"  \
+        -legacy
 
-    # Импорт в JKS
-    $JAVA_HOME/bin/keytool -v -importkeystore \
-        -srckeystore "$dns_name.p12" \
-        -srcstorepass "$CERT_DEFAULT_PASSWORD" \
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Ошибка при создании PKCS12"
+        return 1
+    fi
+
+    # 3. Создание JKS
+    local jks_file="$cert_dir/$dns_name.jks"
+    log "INFO" "Шаг 3: Создание JKS"
+
+    # Удаляем существующий JKS
+    rm -f "$jks_file"
+
+    # Создаем пустой JKS
+    "$JAVA_HOME/bin/keytool" -genkeypair \
+        -keyalg RSA \
+        -alias "$dns_name" \
+        -keystore "$jks_file" \
+        -storepass "$CERT_PASSWORD" \
+        -keypass "$CERT_PASSWORD" \
+        -dname "CN=$dns_name, O=$CERT_ORGANIZATION, L=$CERT_LOCATION, C=$CERT_COUNTRY" \
+        -validity "$CERT_DEFAULT_DAYS"
+
+    # Удаляем автоматически созданную запись
+    "$JAVA_HOME/bin/keytool" -delete \
+        -alias "$dns_name" \
+        -keystore "$jks_file" \
+        -storepass "$CERT_PASSWORD"
+
+    # Импортируем сертификат в JKS
+    "$JAVA_HOME/bin/keytool" -importkeystore \
+        -srckeystore "$p12_file" \
         -srcstoretype PKCS12 \
-        -destkeystore "$dns_name.jks" \
+        -srcstorepass "$CERT_PASSWORD" \
+        -destkeystore "$jks_file" \
         -deststoretype JKS \
-        -deststorepass "$CERT_DEFAULT_PASSWORD"
+        -deststorepass "$CERT_PASSWORD" \
+        -srcalias "$dns_name" \
+        -destalias "$dns_name" \
+        -noprompt
 
-    # Удаление временного конфига
-    rm config.cfg
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Ошибка при импорте в JKS"
+        return 1
+    fi
 
-    log "INFO" "Сертификат для $dns_name успешно сгенерирован в $CERT_BASE_DIR/$dns_name"
+    # 4. Проверка содержимого JKS
+    log "INFO" "Шаг 4: Проверка содержимого JKS"
+    "$JAVA_HOME/bin/keytool" -list \
+        -keystore "$jks_file" \
+        -storepass "$CERT_PASSWORD"
+
+    # 5. Установка правильных прав доступа
+    log "INFO" "Шаг 5: Установка прав доступа"
+    chmod 600 "$key_file"
+    chmod 600 "$crt_file"
+    chmod 600 "$p12_file"
+    chmod 600 "$jks_file"
+
+    # 6. Удаление временного конфигурационного файла
+    rm "$config_file"
+
+    log "INFO" "Сертификат для $dns_name успешно сгенерирован в $cert_dir"
+
+    # Вывод списка сгенерированных файлов
+    log "INFO" "Список сгенерированных файлов:"
+    ls -l "$cert_dir"
+
+    return 0
 }
 
 list_certificates() {
