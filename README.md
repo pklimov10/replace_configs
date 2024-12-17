@@ -66,3 +66,141 @@
 1. Скачайте скрипт
 2. Сделайте его исполняемым:
    chmod +x script_name
+
+▎Конфигурация системы
+
+▎Содержание
+- [Основные настройки](#основные-настройки)
+- [Настройки безопасности](#настройки-безопасности)
+- [Базы данных](#базы-данных)
+- [Сервисы и интеграции](#сервисы-и-интеграции)
+- [Настройки производительности](#настройки-производительности)
+
+▎Основные настройки
+
+▎Настройки хоста
+HOSTNAME=default  # Системное имя хоста
+
+
+▎Серверы ActiveMQ Artemis
+
+`artemis01=192.168.1.1
+artemis02=192.168.1.2
+`
+
+▎Настройки безопасности
+
+▎Java KeyStore
+
+`JKS=/path/to/keystore.jks
+JKSPASS=your_keystore_password`
+
+
+▎KeyCloak
+
+`KEYCLOAK_URL=https://keycloak.example.com
+KEYCLOAK_REALM_NAME=realm
+KEYCLOAK_CLIENT_ID=client
+KEYCLOAK_TRUSTSTORE=/path/to/truststore`
+
+
+▎Базы данных
+
+▎CM5 Database
+
+`DB_HOST_CM5=localhost
+DB_PORT_CM5=5432
+DB_NAME_CM5=cm5_db
+DB_USER_CM5=user
+DB_PASS_CM5=password`
+
+
+▎CMR Database
+
+`DB_HOST_CMR=localhost
+DB_PORT_CMR=5432
+DB_NAME_CMR=cmr_db
+DB_USER_CMR=user
+DB_PASS_CMR=password`
+
+
+▎CMJ Database
+
+`DB_HOST_CMJ=localhost
+DB_PORT_CMJ=5432
+DB_NAME_CMJ=cmj_db
+DB_USER_CMJ=user
+DB_PASS_CMJ=password`
+
+
+▎Driver
+
+`driver=org.postgresql.Driver-42.2.5
+`
+
+▎Сервисы и интеграции
+
+▎URL endpoints
+
+`solr_url=http://solr.example.com
+entrypoint_url=http://api.example.com
+sedsvcMedo_entrypoint_url=http://medo.example.com
+`
+
+▎Почтовый сервер
+
+`mail_server_host=smtp.example.com
+MAIL_SERVER_PORT=587
+MAIL_DEFAULT_SENDER=noreply@example.com
+MAIL_USERNAME=user@example.com`
+
+
+▎Журнал безопасности
+
+`sej_api_entry_point=http://sej.example.com/api
+`
+
+▎Хранилища
+
+`ATTACHMENT_STORAGE=/path/to/attachments
+ATTACHMENT_TEMP_STORAGE=/path/to/temp`
+
+
+▎Настройки производительности
+
+▎Кэширование
+
+`GLOBAL_CACHE_ENABLED=true
+GLOBAL_CACHE_MODE=distributed
+GLOBAL_CACHE_MAX_SIZE=1000
+GLOBAL_CACHE_CLUSTER_MODE=sync`
+
+
+▎JVM параметры
+
+`JAVA_XMS=2G
+JAVA_XMX=4G
+JAVA_MAX_METASPACE=512M
+JAVA_GC_LOG_PATH=/path/to/gc.log
+JAVA_TMP_DIR=/path/to/tmp`
+
+
+▎Настройки выполнения задач
+
+`
+CM_TASKS_EXECUTOR_QUEUE_CAPACITY=100
+CM_TASKS_EXECUTOR_POOL_SIZE=10
+`
+
+▎Дополнительные параметры
+
+`FORCE_DB_CONSISTENCY_CHECK=true
+AM_AUTOSTART_ENABLED=true`
+
+
+▎Примечания
+
+- Все пути должны быть абсолютными
+- Пароли должны быть надежно защищены
+- Рекомендуется регулярное резервное копирование баз данных
+- Параметры JVM следует настраивать в соответствии с доступными ресурсами сервера
