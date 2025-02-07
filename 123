@@ -1,0 +1,176 @@
+- name: Update
+    hosts: "{{ target_host }}"
+    become: true
+    become_user: root
+    become_method: sudo
+
+    vars:
+      ansible_user: "{{ ssh_user }}"
+      ansible_ssh_pass: "{{ ssh_pass }}"
+      ansible_become_pass: "{{ ssh_pass }}"
+      app_url: "{{ url_cheak }}"
+      app_username: "{{ app_user }}"
+      app_password: "{{ app_pass }}"
+      app_min: "{{ min_paus }}"
+
+    tasks:
+      - name: Pause for 10 minutes before checking application availability
+        pause:
+          minutes: "{{ app_min }}"
+
+      - name: Wait for application to be available
+        uri:
+          url: "{{ app_url }}"
+          status_code: 200
+          timeout: 30
+          url_username: "{{ app_username }}"
+          url_password: "{{ app_password }}"
+        register: result
+        until: result.status == 200
+        retries: 5
+        delay: 10
+
+
+
+# playbook.yml
+- name: Download artifact from Nexus
+  hosts: "{{ target_host }}"
+  become: true
+  become_user: root
+  become_method: sudo
+  vars:
+    ansible_user: "{{ ssh_user }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    ansible_become_pass: "{{ ssh_pass }}"
+    nexus_url: "http://10.7.39.35:8081/repository/maven-public/ru/intertrust/cm-rshb/ssrv-rshb-war/7.0.3.226/"
+    artifact_name: "ssrv-rshb-war-{{ version }}.war"
+    destination_path: "{{ patch }}"
+  tasks:
+    - name: Check if the artifact already exists
+      become: true
+      become_user: root
+      become_method: sudo
+      find:
+        paths: "{{ destination_path }}"
+        patterns: "{{ artifact_name }}"
+      register: files_to_remove
+
+    - name: Remove existing artifact if it exists
+      become: true
+      become_user: root
+      become_method: sudo
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ files_to_remove.files }}"
+      when: files_to_remove.matched > 0
+
+    - name: Download artifact from Nexus
+      become: true
+      become_user: root
+      become_method: sudo
+      get_url:
+        url: "{{ nexus_url }}{{ artifact_name }}"
+        dest: "{{ destination_path }}/{{ artifact_name }}"
+
+
+
+# playbook.yml
+- name: Update
+  hosts: "{{ target_host }}"
+  become: true
+  become_user: root
+  become_method: sudo
+
+  vars:
+    ansible_user: "{{ ssh_user }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    ansible_become_pass: "{{ ssh_pass }}"
+    src_path: "{{ patch }}"
+    dest_path: "{{ destpath }}"
+    file_mask: "ssrv*"
+    artifact_name: "ssrv-rshb-war-{{ version }}.war"
+
+  tasks:
+    - name: Check if src_path is empty or contains more than one file
+      find:
+        paths: "{{ src_path }}/{{  artifact_name }}"
+        file_type: file
+      register: src_files
+      become: true
+      become_user: root
+      become_method: sudo
+
+    - name: Fail if src_path is empty or contains more than one file
+      fail:
+        msg: "The source directory must contain exactly one file."
+      when: not src_files.matched !=1
+
+    - name: Remove files by mask
+      find:
+        paths: "{{ dest_path }}"
+        patterns: "{{ file_mask }}"
+      register: files_to_remove
+
+    - name: Delete found files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ files_to_remove.files }}"
+      when: files_to_remove.matched > 0
+
+    - name: Copy files from source to destination
+      copy:
+        src: "{{ src_path }}/{{ artifact_name }}"
+        dest: "{{ dest_path }}/"
+        mode: preserve
+        remote_src: yes
+
+#1. **Check if src_path is empty or contains more than one file**:
+#  - Используется модуль find для поиска всех файлов в исходной директории (src_path).
+#  - Результаты поиска сохраняются в переменной src_files.
+
+#2. **Fail if src_path is empty or contains more than one file**:
+# - Используется модуль fail для завершения выполнения плейбука с ошибкой, если исходная директория пуста или содержит более одного файла.
+# - Условие when проверяет, что количество найденных файлов (src_files.matched) равно нулю или больше одного.
+
+
+- name: stop
+  hosts: "{{ target_host }}"
+  become: true
+  become_user: root
+  become_method: sudo
+  vars:
+    ansible_user: "{{ ssh_user }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    ansible_become_pass: "{{ ssh_pass }}"
+
+
+
+  tasks:
+    - name: Stop Wildfly service
+      command: systemctl start wildfly
+      become: true
+      become_user: root
+      become_method: sudo
+
+
+- name: stop
+  hosts: "{{ target_host }}"
+  become: true
+  become_user: root
+  become_method: sudo
+  vars:
+    ansible_user: "{{ ssh_user }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    ansible_become_pass: "{{ ssh_pass }}"
+
+
+
+  tasks:
+    - name: Stop Wildfly service
+      command: systemctl stop wildfly
+      become: true
+      become_user: root
+      become_method: sudo
+
